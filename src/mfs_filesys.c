@@ -26,8 +26,13 @@
 *
 ******************************************************************************/
 
+
+
 #include <string.h>
+#include <stdio.h>
 #include "xilmfs.h"
+
+
 /** Global data for file system and open files
  * There can be only one MFS file system because of these globals
  * If you ever need multiple instances of the MFS file system
@@ -36,14 +41,28 @@
  * and pass a pointer to an instance of this struct to every function
  * that uses these globals
  */
-/* file system data */
-struct mfs_file_block* mfs_file_system; /* file system blocks allocated or reserved before calling mfs_init */
-int mfs_max_file_blocks; /* max number of blocks available - parameter to mfs_init */
-int mfs_free_block_list; /* first element in free list; set by mfs_init */
-/* data for file open */
-struct mfs_open_file_struct mfs_open_files[MFS_MAX_OPEN_FILES];
-int mfs_num_open_files; /* the number of mfs_open_files */
-int mfs_current_dir; /* index of current directory block */
+struct mfs_filesystem_struct mfs_file_systems_table[MFS_MAX_FILESYSTEM];
+
+
+/**
+ * initialize the MFS system;
+ * this function must be called before any file system operations
+ */
+void mfs_init() {
+  memset(mfs_file_systems_table, 0, sizeof(mfs_file_systems_table));
+
+  #ifdef DEBUG
+    printf("MFS File Name Len.: %d\n", MFS_MAX_FILENAME_LENGTH);
+    printf("MFS Dir Entry Block: %d\n", sizeof(struct mfs_dir_ent_block ));
+    printf("MFS Dir Entries: %d\n", MFS_MAX_LOCAL_ENT);
+    printf("MFS Dir Block: %d\n", sizeof(struct mfs_dir_block ));
+    printf("MFS Data Block Size: %d\n", MFS_BLOCK_DATA_SIZE);
+    printf("MFS File Block: %d\n", sizeof(struct mfs_file_block));
+    printf("MFS File System: %d\n", sizeof(struct mfs_filesystem_struct));
+  #endif
+
+}
+
 
 /**
  * initialize the file system;
@@ -57,57 +76,87 @@ int mfs_current_dir; /* index of current directory block */
  * MFSINIT_NEW for creating empty read/write filesystem
  * MFSINIT_IMAGE for creating read/write filesystem with predefined data
  * MFSINIT_ROM_IMAGE for creating read-only filesystem with predefined data
+ * @return zero-based device number, negative error code for failure
  */
-void mfs_init_fs(int numbytes, char *address, int init_type) {
+int mfs_init_fs(int numbytes, char *address, int init_type) {
   int i;
-  mfs_max_file_blocks = numbytes/sizeof(struct mfs_file_block);
-  mfs_file_system = (struct mfs_file_block *)address;
-if (init_type == MFSINIT_NEW) {
-  /* set the zeroth block to be a dir_block with itself as its parent */
-  /* initialize the free block list */
-  mfs_file_system[0].block_type = MFS_BLOCK_TYPE_DIR;
-  mfs_file_system[0].index = 0;
-  mfs_file_system[0].next_block = 0;
-  mfs_file_system[0].prev_block = 0;
-  mfs_file_system[0].u.dir_data.num_entries = 2; /* .. and . */
-  mfs_file_system[0].u.dir_data.num_deleted = 0;
-  strcpy(mfs_file_system[0].u.dir_data.dir_ent[0].name, "..");
-  mfs_file_system[0].u.dir_data.dir_ent[0].deleted = 'n';
-  mfs_file_system[0].u.dir_data.dir_ent[0].index = 0; /* .. = index of this block */
-  strcpy(mfs_file_system[0].u.dir_data.dir_ent[1].name, ".");
-  mfs_file_system[0].u.dir_data.dir_ent[1].deleted = 'n';
-  mfs_file_system[0].u.dir_data.dir_ent[1].index = 0; /* . = index of this block */
-  for (i = 1; i < mfs_max_file_blocks; i++) {
-    mfs_file_system[i].block_type = MFS_BLOCK_TYPE_EMPTY;
-    mfs_file_system[i].next_block = i+1;
-    mfs_file_system[i].index = i;
-    mfs_file_system[i].prev_block = i-1;
+  int device = -1;
+  struct mfs_file_block* mfs_file_system;
+
+  for (device = 0; device < MFS_MAX_FILESYSTEM; device++) {
+    if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE )
+    {
+      break;
+    }
   }
-  mfs_file_system[mfs_max_file_blocks-1].next_block = 0;
-  /* the last block points to 0 */
-  /* initialize free block list to the first free index = 1 */
-  mfs_free_block_list = 1;
-}
-else if (init_type == MFSINIT_IMAGE) {
-  i = 0;
-  while (mfs_file_system[i].block_type != MFS_BLOCK_TYPE_EMPTY) {
-    i++;
+
+  if (device == MFS_MAX_FILESYSTEM) {
+    return MFS_ERROR_NO_FREE_IDS;
   }
-  /* initialize free block list to the first free index = 1 */
-  mfs_free_block_list = i;
-}
-else { // (init_type == MFSINIT_ROM_IMAGE)
-	 mfs_free_block_list = 0;
-}
+
+  mfs_file_systems_table[device].flags = MFS_FLAG_IS_IN_USE;
+
+
+  mfs_file_systems_table[device].mfs_max_file_blocks = numbytes/sizeof(struct mfs_file_block);
+  mfs_file_systems_table[device].mfs_file_system = (struct mfs_file_block *)address;
+
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
+  if (init_type == MFSINIT_NEW) {
+    /* set the zeroth block to be a dir_block with itself as its parent */
+    /* initialize the free block list */
+    mfs_file_system[0].block_type = MFS_BLOCK_TYPE_DIR;
+    mfs_file_system[0].index = 0;
+    mfs_file_system[0].next_block = 0;
+    mfs_file_system[0].prev_block = 0;
+    mfs_file_system[0].u.dir_data.num_entries = 2; /* .. and . */
+    mfs_file_system[0].u.dir_data.num_deleted = 0;
+    strcpy(mfs_file_system[0].u.dir_data.dir_ent[0].name, "..");
+    mfs_file_system[0].u.dir_data.dir_ent[0].deleted = 'n';
+    mfs_file_system[0].u.dir_data.dir_ent[0].index = 0; /* .. = index of this block */
+    strcpy(mfs_file_system[0].u.dir_data.dir_ent[1].name, ".");
+    mfs_file_system[0].u.dir_data.dir_ent[1].deleted = 'n';
+    mfs_file_system[0].u.dir_data.dir_ent[1].index = 0; /* . = index of this block */
+    for (i = 1; i < mfs_file_systems_table[device].mfs_max_file_blocks; i++) {
+      mfs_file_system[i].block_type = MFS_BLOCK_TYPE_EMPTY;
+      mfs_file_system[i].next_block = i+1;
+      mfs_file_system[i].index = i;
+      mfs_file_system[i].prev_block = i-1;
+    }
+    mfs_file_system[mfs_file_systems_table[device].mfs_max_file_blocks-1].next_block = 0;
+    /* the last block points to 0 */
+    /* initialize free block list to the first free index = 1 */
+    mfs_file_systems_table[device].mfs_free_block_list = 1;
+  }
+  else if (init_type == MFSINIT_IMAGE) {
+    i = 0;
+    while (mfs_file_system[i].block_type != MFS_BLOCK_TYPE_EMPTY) {
+      i++;
+    }
+    /* initialize free block list to the first free index */
+    mfs_file_systems_table[device].mfs_free_block_list = i;
+    // TODO: scan the whole filesystem chaining the free blocks
+    return MFS_ERROR_NOT_IMPLEMENTED;
+  }
+  else { // (init_type == MFSINIT_ROM_IMAGE)
+    mfs_file_systems_table[device].flags |= MFSINIT_ROM_IMAGE;
+
+    mfs_file_systems_table[device].mfs_free_block_list = 0;
+  }
 
   /* initialize current dir to the top level */
-  mfs_current_dir = 0;
+  mfs_file_systems_table[device].mfs_current_dir = 0;
 
   /* initialize mfs_open_files */
-  for (i = 0; i < MFS_MAX_OPEN_FILES; i++)
-    mfs_open_files[i].mode = MFS_MODE_FREE;
-  mfs_num_open_files = 0;
+  for (i = 0; i < MFS_MAX_OPEN_FILES; i++) {
+    mfs_file_systems_table[device].mfs_open_files[i].mode = MFS_MODE_FREE;
+  }
+  mfs_file_systems_table[device].mfs_num_open_files = 0;
+
+  return device;
 }
+
+
 
 /**
  * initialize the file system with a file image generated by mfsgen;
@@ -119,8 +168,9 @@ else { // (init_type == MFSINIT_ROM_IMAGE)
  * @param init_type is one of
  * MFSINIT_IMAGE for creating read/write filesystem with predefined data
  * MFSINIT_ROM_IMAGE for creating read-only filesystem with predefined data
+ * @return zero-based device number, negative error code for failure
  */
-void mfs_init_genimage(int numbytes, char *address, int init_type) {
+int mfs_init_genimage(int numbytes, char *address, int init_type) {
    /* mfsgen generates a file image that contains 4 bytes identifying
     * the file type as mfs2 or MFS2, followed by the file system blocks.
     * So the number of bytes is 4 more than the number of bytes in the
@@ -129,13 +179,14 @@ void mfs_init_genimage(int numbytes, char *address, int init_type) {
     * Use these new values to call the mfs_init_fs function to do
     * the actual work
     */
-   mfs_init_fs(numbytes-4, address+4, init_type);
+   return mfs_init_fs(numbytes-4, address+4, init_type);
 }
 
 
 /**
  * Given a filename, get the directory block and the directory index within
  * that block that correspond to the entry for this filename
+ * @param device zero-based device number
  * @param filename
  * @param dir_block is a pointer to the block that is found
  * @param dir_index is a pointer to the index within the block that is found
@@ -152,8 +203,18 @@ void mfs_init_genimage(int numbytes, char *address, int init_type) {
  *                    -1 to indicate error
  *
  */
-static int get_dir_ent_base(const char *filename,  int *dir_block, int *dir_index, int *reuse_block, int *reuse_index) {
+static int get_dir_ent_base(const int device, const char *filename,  int *dir_block, int *dir_index, int *reuse_block, int *reuse_index) {
   /* *dir_index = 0; *dir_block = valid dir corresponding to filename prefixes processed so far, on entry to this proc */
+
+  struct mfs_file_block* mfs_file_system;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    *dir_block = -1;
+    *dir_index = -1;
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
   int numentriesleft = mfs_file_system[*dir_block].u.dir_data.num_entries;
   char tmpfilename[MFS_MAX_FILENAME_LENGTH];
   int index = 0;
@@ -186,7 +247,7 @@ static int get_dir_ent_base(const char *filename,  int *dir_block, int *dir_inde
         *dir_block = mfs_file_system[*dir_block].u.dir_data.dir_ent[*dir_index].index;
         *dir_index = 0;
         filename++;
-        return(get_dir_ent_base(filename, dir_block, dir_index, reuse_block, reuse_index));
+        return(get_dir_ent_base(device, filename, dir_block, dir_index, reuse_block, reuse_index));
       }
 
     }
@@ -208,7 +269,17 @@ static int get_dir_ent_base(const char *filename,  int *dir_block, int *dir_inde
     return 0;
   }
 }
+
+
+
 /**
+ * Given a filename, get the directory entry
+ * @param device zero-based device number
+ * @param filename
+ * @param dir_block is a pointer to the block that is found
+ * @param dir_index is a pointer to the index within the block that is found
+ * @param reuse_block 
+ * @param reuse_index 
  * filename is an arbitrarily long  '/' separated path name
  * each component of the path name is never longer than MFS_MAX_FILENAME_LENGTH
  * if the first character is '/', search starting at the root directory
@@ -226,20 +297,27 @@ static int get_dir_ent_base(const char *filename,  int *dir_block, int *dir_inde
  *                    -1 to indicate error
  *
  */
-static int get_dir_ent(const char *filename,  int *dir_block, int *dir_index, int *reuse_block, int *reuse_index) {
+static int get_dir_ent(const int device, const char *filename,  int *dir_block, int *dir_index, int *reuse_block, int *reuse_index) {
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    *dir_block = -1;
+    *dir_index = -1;
+    return 0;
+  }
+
   if (filename != NULL && *filename != '\0') {
     if (*filename == '/') {
       filename++;
       *dir_block = 0;
     }
     else {
-      *dir_block = mfs_current_dir;
+      *dir_block = mfs_file_systems_table[device].mfs_current_dir;
     }
     *dir_index = 0;
     if (*filename == '\0') /* done - looking for the root directory */
       return 1;
     else
-      return(get_dir_ent_base(filename, dir_block, dir_index, reuse_block, reuse_index));
+      return(get_dir_ent_base(device, filename, dir_block, dir_index, reuse_block, reuse_index));
   }
   /* error condition */
   *dir_block = -1;
@@ -250,6 +328,7 @@ static int get_dir_ent(const char *filename,  int *dir_block, int *dir_index, in
 
 /**
  * get the directory block and the index within the directory block that contain the value file_index
+ * @param device zero-based device number
  * @param dir_block is the pointer to the directory block that is found
  * @param dir_index is the pointer to the directory index that is found
  * @return 0 for failure and 1 for success
@@ -261,50 +340,66 @@ static int get_dir_ent(const char *filename,  int *dir_block, int *dir_index, in
  *                    index of last searched block which should have no free entries
  * return dir_index = index within dir_block of first free entry or MFS_MAX_LOCAL_ENT if last searched block has no free entry
 */
-static int get_dir_ent_by_index(unsigned int file_index,  int *dir_block, int *dir_index) {
+static int get_dir_ent_by_index(const int device, unsigned int file_index,  int *dir_block, int *dir_index) {
 
-   int numentriesleft;
-   /* dir_block is the parent directory of file_index block -> entry 0 is always ".." */
-   *dir_block = mfs_file_system[file_index].u.dir_data.dir_ent[0].index;
-   numentriesleft = mfs_file_system[*dir_block].u.dir_data.num_entries;
+  int numentriesleft;
 
-   *dir_index = 0;
+  struct mfs_file_block* mfs_file_system;
 
-   while (numentriesleft > 0) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    *dir_block = -1;
+    *dir_index = -1;
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
 
-      if (*dir_index == MFS_MAX_LOCAL_ENT) { /* move to the next dir block */
-         *dir_index = 0;
-         *dir_block = mfs_file_system[*dir_block].next_block;
-      }
+  /* dir_block is the parent directory of file_index block -> entry 0 is always ".." */
+  *dir_block = mfs_file_system[file_index].u.dir_data.dir_ent[0].index;
+  numentriesleft = mfs_file_system[*dir_block].u.dir_data.num_entries;
 
-      if (mfs_file_system[*dir_block].u.dir_data.dir_ent[*dir_index].deleted != 'y' &&
-          mfs_file_system[*dir_block].u.dir_data.dir_ent[*dir_index].index == file_index) { /* found the entry */
-         /* *dir_index = index; */
-         /* *dir_block = dir; */
-         return 1;
-      }
-      *dir_index += 1;
-      numentriesleft--;
-   }
-   return 0;
+  *dir_index = 0;
+
+  while (numentriesleft > 0) {
+
+    if (*dir_index == MFS_MAX_LOCAL_ENT) { /* move to the next dir block */
+        *dir_index = 0;
+        *dir_block = mfs_file_system[*dir_block].next_block;
+    }
+
+    if (mfs_file_system[*dir_block].u.dir_data.dir_ent[*dir_index].deleted != 'y' &&
+        mfs_file_system[*dir_block].u.dir_data.dir_ent[*dir_index].index == file_index) { /* found the entry */
+        /* *dir_index = index; */
+        /* *dir_block = dir; */
+        return 1;
+    }
+    *dir_index += 1;
+    numentriesleft--;
+  }
+  return 0;
 }
 
 
 /**
  * modify global mfs_current_dir to index of newdir if it exists
  * mfs_current_dir is not modified otherwise
+ * @param device zero-based device number
  * @param newdir is the name of the new directory
  * @return 1 for success and 0 for failure
  */
-int mfs_change_dir(const char *newdir) {
+int mfs_change_dir(const int device, const char *newdir) {
   /* search current dir for newdir and change current dir if found */
   /* return 1 for success, 0 for failure */
   int new_dir_block;
   int new_dir_index;
   int reuse_block = -1;
   int reuse_index = -1;
-  if (get_dir_ent(newdir, &new_dir_block, &new_dir_index, &reuse_block, &reuse_index)) {
-    mfs_current_dir = mfs_file_system[new_dir_block].u.dir_data.dir_ent[new_dir_index].index;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (get_dir_ent(device, newdir, &new_dir_block, &new_dir_index, &reuse_block, &reuse_index)) {
+    mfs_file_systems_table[device].mfs_current_dir = mfs_file_systems_table[device].mfs_file_system[new_dir_block].u.dir_data.dir_ent[new_dir_index].index;
     return 1;
   }
   return 0;
@@ -312,24 +407,30 @@ int mfs_change_dir(const char *newdir) {
 
 /**
  * allocate a new block from the free list
+ * @param device zero-based device number
  * @param new_entry_index is modified to point to the newly allocated block
  * @return 1 on success, 0 on failure
  */
-static int get_next_free_block(int *new_entry_index) {
-  if (mfs_free_block_list != 0) {
-    *new_entry_index = mfs_free_block_list;
+static int get_next_free_block(const int device, int *new_entry_index) {
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (mfs_file_systems_table[device].mfs_free_block_list != 0) {
+    *new_entry_index = mfs_file_systems_table[device].mfs_free_block_list;
 
     /* update free_list */
-    mfs_free_block_list = mfs_file_system[*new_entry_index].next_block;
-    if (mfs_free_block_list != 0) {
-      mfs_file_system[mfs_free_block_list].prev_block = 0;
+    mfs_file_systems_table[device].mfs_free_block_list = mfs_file_systems_table[device].mfs_file_system[*new_entry_index].next_block;
+    if (mfs_file_systems_table[device].mfs_free_block_list != 0) {
+      mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_free_block_list].prev_block = 0;
     }
     else {
       /* free list is empty so do not update prev pointer of first element */
     }
     /* remove block from free list */
-    mfs_file_system[*new_entry_index].prev_block = 0;
-    mfs_file_system[*new_entry_index].next_block = 0;
+    mfs_file_systems_table[device].mfs_file_system[*new_entry_index].prev_block = 0;
+    mfs_file_systems_table[device].mfs_file_system[*new_entry_index].next_block = 0;
     return 1;
   }
   return 0; /* failed to get free block */
@@ -338,13 +439,22 @@ static int get_next_free_block(int *new_entry_index) {
 /**
  * create a new directory block, and initialize it with info about . and ..
  * if this dir wants to know its name, it needs to ask its parent
+ * @param device zero-based device number
  * @param file_type is either MFS_BLOCK_TYPE_DIR or MFS_BLOCK_TYPE_FILE
  * @param new_entry_index is a pointer to the index of the newly allocated block for the new file
  * @param parent_dir_block is the index of the parent directory of the new file/dir
  * @return 1 for success and 0 for failure
  */
-static int create_new_file(int file_type, int *new_entry_index, int parent_dir_block) {
-  if (get_next_free_block(new_entry_index)) {
+static int create_new_file(const int device, int file_type, int *new_entry_index, int parent_dir_block) {
+
+  struct mfs_file_block* mfs_file_system;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
+  if (get_next_free_block(device, new_entry_index)) {
     if (file_type == MFS_BLOCK_TYPE_DIR) {
       /* fill in the new dir block with .. and . */
       mfs_file_system[*new_entry_index].block_type = MFS_BLOCK_TYPE_DIR;
@@ -420,18 +530,26 @@ static int set_filename(char *to_name, char *from_name) {
 /**
  * get the first directory block corresponding to "this" directory block
  * the first directory block contains info about the number of files in the dir
+ * @param device zero-based device number
  * @param dir_block is the index of "this" directory block
  * @return the index of the first directory block
  */
-static int get_first_dir_block(unsigned int dir_block) {
-   while (mfs_file_system[dir_block].prev_block != 0) {
+static int get_first_dir_block(const int device, unsigned int dir_block) {
+  struct mfs_file_block* mfs_file_system;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
+  while (mfs_file_system[dir_block].prev_block != 0) {
     dir_block = mfs_file_system[dir_block].prev_block;
   }
-   /* Fix for CR #161963 */
-   /* If the previous block was '0' and not a free block return 0 */
-   if (mfs_file_system[0].next_block == dir_block)
-      return 0;
-   return dir_block;
+  /* Fix for CR #161963 */
+  /* If the previous block was '0' and not a free block return 0 */
+  if (mfs_file_system[0].next_block == dir_block)
+    return 0;
+  return dir_block;
 }
 
 /**
@@ -440,11 +558,12 @@ static int get_first_dir_block(unsigned int dir_block) {
  * If there is no space on the file system to create file, return 0
  * else create the new file or dir, add entry in current dir table
  * and return index of first block of file or dir
+ * @param device zero-based device number
  * @param filename is name of file to create
  * @param file_type is either MFS_BLOCK_TYPE_DIR (for directory) or MFS_BLOCK_TYPE_FILE (for a regular file)
  * @return 1 for success and 0 for failure
  */
-static int create_file(const char *filename, int file_type) {
+static int create_file(const int device, const char *filename, int file_type) {
   int new_dir_block;
   int new_dir_index;
   int new_entry_index;
@@ -453,8 +572,14 @@ static int create_file(const char *filename, int file_type) {
   int reuse_block = -1;
   int reuse_index = -1;
   int reusing = 0;
+  struct mfs_file_block* mfs_file_system;
 
-  if (get_dir_ent(filename, &new_dir_block, &new_dir_index, &reuse_block, &reuse_index)) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
+  if (get_dir_ent(device, filename, &new_dir_block, &new_dir_index, &reuse_block, &reuse_index)) {
     /* file already exists */
     return 0 ; /* cannot create file if it already exists */
   }
@@ -464,48 +589,48 @@ static int create_file(const char *filename, int file_type) {
   }
   else { /* create the file */
     /* first check if there is a reusable entry */
-	if ((reuse_block != -1) && (reuse_index != -1)) {
-	  /* found an entry to reuse */
-	  new_dir_index = reuse_index;
-	  new_dir_block = reuse_block;
-	  reusing = 1;
-	}
+    if ((reuse_block != -1) && (reuse_index != -1)) {
+      /* found an entry to reuse */
+      new_dir_index = reuse_index;
+      new_dir_block = reuse_block;
+      reusing = 1;
+    }
     else {
-	  /* check if the current dir block is full and
-         allocate a new dir block if needed */
+      /* check if the current dir block is full and
+        allocate a new dir block if needed */
 
       if (new_dir_index == MFS_MAX_LOCAL_ENT) {
         /* create a new dir block linked from this one */
-        if (get_next_free_block(&new_block)) { /* found a free block */
-	      mfs_file_system[new_block].prev_block = new_dir_block;
-	      mfs_file_system[new_block].next_block = 0;
-	      mfs_file_system[new_block].block_type = MFS_BLOCK_TYPE_DIR;
-	      mfs_file_system[new_block].u.dir_data.num_entries = 0;
-	      mfs_file_system[new_block].u.dir_data.num_deleted = 0;
-	      mfs_file_system[new_dir_block].next_block = new_block;
-	      new_dir_block = new_block;
-	      new_dir_index = 0;
+        if (get_next_free_block(device, &new_block)) { /* found a free block */
+          mfs_file_system[new_block].prev_block = new_dir_block;
+          mfs_file_system[new_block].next_block = 0;
+          mfs_file_system[new_block].block_type = MFS_BLOCK_TYPE_DIR;
+          mfs_file_system[new_block].u.dir_data.num_entries = 0;
+          mfs_file_system[new_block].u.dir_data.num_deleted = 0;
+          mfs_file_system[new_dir_block].next_block = new_block;
+          new_dir_block = new_block;
+          new_dir_index = 0;
         }
         else { /* no space for new block  - return failure */
-	      return 0;
+          return 0;
         }
       }
     }
     /* at this point new_dir_index and new_dir_block both point to
        the first free entry */
-    first_dir_block = get_first_dir_block(new_dir_block);
-    if (!create_new_file(file_type, &new_entry_index, first_dir_block)) { /* cannot create new file */
+    first_dir_block = get_first_dir_block(device, new_dir_block);
+    if (!create_new_file(device, file_type, &new_entry_index, first_dir_block)) { /* cannot create new file */
       return 0; /* failure */
     };
 
-	if (reusing != 1) {
-      /* update number of entries in current block */
-      mfs_file_system[new_dir_block].u.dir_data.num_entries += 1;
-      /* update number of entries in directory if it is different than current block */
+    if (reusing != 1) {
+        /* update number of entries in current block */
+        mfs_file_system[new_dir_block].u.dir_data.num_entries += 1;
+        /* update number of entries in directory if it is different than current block */
 
-      if (new_dir_block != first_dir_block)
-        mfs_file_system[first_dir_block].u.dir_data.num_entries += 1;
-	}
+        if (new_dir_block != first_dir_block)
+          mfs_file_system[first_dir_block].u.dir_data.num_entries += 1;
+    }
     mfs_file_system[new_dir_block].u.dir_data.dir_ent[new_dir_index].index = new_entry_index;
     set_filename(mfs_file_system[new_dir_block].u.dir_data.dir_ent[new_dir_index].name, get_basename(filename));
     mfs_file_system[new_dir_block].u.dir_data.dir_ent[new_dir_index].deleted = 'n';
@@ -519,32 +644,47 @@ static int create_file(const char *filename, int file_type) {
  * to the free list
  * the blocks are all already marked as MFS_BLOCK_TYPE_EMPTY
  * the prev_block of start_index is 0, and the next_block of end_index = 0
+ * @param device zero-based device number
  * @param start_index
  * @param end_indexA
  * @return 1 - always succeeds
  */
-static int move_to_free_list(int start_index, int end_index) {
-  if (mfs_free_block_list != 0) { /* free list exists and is non empty */
+static int move_to_free_list(const int device, int start_index, int end_index) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (mfs_file_systems_table[device].mfs_free_block_list != 0) { /* free list exists and is non empty */
     /* prepend this list to the existing free list */
-    mfs_file_system[mfs_free_block_list].prev_block = end_index;
-    mfs_file_system[end_index].next_block = mfs_free_block_list;
+    mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_free_block_list].prev_block = end_index;
+    mfs_file_systems_table[device].mfs_file_system[end_index].next_block = mfs_file_systems_table[device].mfs_free_block_list;
   }
-  else { /* free list is empty - no need to prepend */
+  else { 
+    /* free list is empty - no need to prepend */
   }
-  mfs_free_block_list = start_index;
+  mfs_file_systems_table[device].mfs_free_block_list = start_index;
   return 1; /* always succeeds */
 }
 
 /**
  * mark all the data blocks associated with a file as free and add them
  * to the free list
- *  @param file_index is the index of the first block in the list of blocks that make up the file
+ * @param device zero-based device number
+ * @param file_index is the index of the first block in the list of blocks that make up the file
  * @return 1 for success and 0 for failure
  * delete dir blocks only if the directory is empty
  */
-static int delete_data_in_file(int file_index) {
+static int delete_data_in_file(const int device, int file_index) {
   int next_block;
   int current_block;
+
+  struct mfs_file_block* mfs_file_system;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+
   if (mfs_file_system[file_index].block_type == MFS_BLOCK_TYPE_FILE) {
     /* OK to delete */
   }
@@ -566,19 +706,23 @@ static int delete_data_in_file(int file_index) {
     current_block = next_block;
   }
   mfs_file_system[current_block].block_type = MFS_BLOCK_TYPE_EMPTY;
-  move_to_free_list(file_index, current_block);
+  if (!move_to_free_list(device, file_index, current_block)) {
+    /* failed to register free block in free chain */
+    return 0;
+  }
   return 1;
 }
 
 /**
  * delete a file
+ * @param device zero-based device number
  * @param filename is the name of the file to be deleted
  * delete the data blocks corresponding to the file and then delete the
  * file entry from its directory
  * @return 1 on success, 0 on failure
  * delete will not work on a directory unless the directory is empty
  */
-int mfs_delete_file (char *filename) {
+int mfs_delete_file (const int device, char *filename) {
   int dir_block;
   int dir_index;
   int entry_index;
@@ -586,60 +730,77 @@ int mfs_delete_file (char *filename) {
   int reuse_block = -1;
   int reuse_index = -1;
 
-  if (!get_dir_ent(filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (!get_dir_ent(device, filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
     /* file does not exist */
     return 0 ; /* cannot delete file if it does not exist */
   }
-  entry_index = mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
-  if (delete_data_in_file(entry_index)) {
+  entry_index = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
+  if (delete_data_in_file(device, entry_index)) {
     /* now delete the file entry from the directory */
-    mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].deleted = 'y';
-    mfs_file_system[dir_block].u.dir_data.num_deleted += 1;
-    first_dir_block = get_first_dir_block(dir_block);
+    mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].deleted = 'y';
+    mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.num_deleted += 1;
+    first_dir_block = get_first_dir_block(device, dir_block);
     if (dir_block != first_dir_block)
-      mfs_file_system[first_dir_block].u.dir_data.num_deleted += 1;
+      mfs_file_systems_table[device].mfs_file_system[first_dir_block].u.dir_data.num_deleted += 1;
   }
   return 1;
 }
 
 /**
  * create a new empty directory inside the current directory
+ * @param device zero-based device number
  * @param newdir is the name of the directory
  * @return index of new directory in file system if success, 0 if failure
  */
-int mfs_create_dir(char *newdir) {
-  return create_file(newdir, MFS_BLOCK_TYPE_DIR);
+int mfs_create_dir(const int device, char *newdir) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  return create_file(device, newdir, MFS_BLOCK_TYPE_DIR);
 }
 
 /**
  * delete the directory named newdir if it exists, and is empty
- * return 1 on success, 0 on failure
+ * @param device zero-based device number
+ * @param deldir is the name of the directory
+ * @return 1 on success, 0 on failure
  * cannot delete . or ..
  */
-int mfs_delete_dir (char *newdir) {
-  if (!strcmp(newdir,"..") || !strcmp(newdir,"."))
+int mfs_delete_dir (const int device, char *deldir) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
     return 0;
-  return mfs_delete_file(newdir);
+  }
+  if (!strcmp(deldir,"..") || !strcmp(deldir,"."))
+    return 0;
+  return mfs_delete_file(device, deldir);
 }
 
 /**
  * rename from_file to to_file
  * works for dirs as well as files
  * cannot rename to something that already exists
+ * @param device zero-based device number
  * @param from_file
  * @param to_file
  * @return 1 on success, 0 on failure
  */
-int mfs_rename_file(char *from_file, char *to_file) {
+int mfs_rename_file(const int device, char *from_file, char *to_file) {
   int from_dir_block;
   int to_dir_block;
   int from_dir_index;
   int to_dir_index;
   int reuse_block = -1;
   int reuse_index = -1;
-  if (get_dir_ent(from_file, &from_dir_block, &from_dir_index, &reuse_block, &reuse_index) &&
-      !get_dir_ent(to_file, &to_dir_block, &to_dir_index, &reuse_block, &reuse_index)) {
-    set_filename(mfs_file_system[from_dir_block].u.dir_data.dir_ent[from_dir_index].name, get_basename(to_file));
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  if (get_dir_ent(device, from_file, &from_dir_block, &from_dir_index, &reuse_block, &reuse_index) &&
+      !get_dir_ent(device, to_file, &to_dir_block, &to_dir_index, &reuse_block, &reuse_index)) {
+    set_filename(mfs_file_systems_table[device].mfs_file_system[from_dir_block].u.dir_data.dir_ent[from_dir_index].name, get_basename(to_file));
     return 1;
   }
   return 0;
@@ -647,22 +808,28 @@ int mfs_rename_file(char *from_file, char *to_file) {
 
 /**
  * check if a file exists
+ * @param device zero-based device number
  * @param filename is the name of the file
  * @return 0 if filename is not a file in the current directory
  * @return 1 if filename is a file in the current directory
  * @return 2 if filename is a directory in the current directory
  */
-int mfs_exists_file(char *filename) {
+int mfs_exists_file(const int device, char *filename) {
   int dir_block;
   int dir_index;
   int file_block;
   int reuse_block = -1;
   int reuse_index = -1;
-  if (get_dir_ent(filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
-    file_block = mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
-    if (mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_DIR)
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (get_dir_ent(device, filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
+    file_block = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
+    if (mfs_file_systems_table[device].mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_DIR)
       return 2;
-    else if (mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_FILE)
+    else if (mfs_file_systems_table[device].mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_FILE)
       return 1;
     else return 0;
   }
@@ -670,40 +837,93 @@ int mfs_exists_file(char *filename) {
 }
 
 /**
+ * get file size
+ * @param device zero-based device number
+ * @param filename is the name of the file
+ * @param filesize is the size in bytes for a regular file or
+ * the number of entries in a directory
+ * @return 0 if filename is not a file
+ * @return 1 if filename is a file
+ * @return 2 if filename is a directory
+ */
+int mfs_get_file_size(const int device, char *filename, int *filesize) {
+  int dir_block;
+  int dir_index;
+  int file_block;
+  int reuse_block = -1;
+  int reuse_index = -1;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  if (get_dir_ent(device, filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
+    file_block = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
+    if (mfs_file_systems_table[device].mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_DIR)
+    {
+      *filesize = mfs_file_systems_table[device].mfs_file_system[file_block].u.dir_data.num_entries - mfs_file_systems_table[device].mfs_file_system[file_block].u.dir_data.num_deleted;
+      return 2;
+    }
+    else if (mfs_file_systems_table[device].mfs_file_system[file_block].block_type == MFS_BLOCK_TYPE_FILE) {
+      *filesize = mfs_file_systems_table[device].mfs_file_system[file_block].block_size;
+      return 1;
+    }
+    else {
+      return 0;
+    }
+  }
+  return 0;
+
+}
+
+
+
+/**
  * get the name of the current directory
- * @param dirname =  pre_allocated buffer of at least MFS_MAX_FILENAME_SIZE+1 chars
+ * @param device zero-based device number
+ * @param dirname =  pre_allocated buffer of at least MFS_MAX_FILENAME_LENGTH+1 chars
  * The directory name is copied to this buffer
  * @return 1 if success, 0 if failure
  */
-int mfs_get_current_dir_name(char *dirname){
+int mfs_get_current_dir_name(const int device, char *dirname){
   int dir_block;
   int dir_index;
   int file_block;
 
-  file_block = mfs_current_dir;
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  file_block = mfs_file_systems_table[device].mfs_current_dir;
   if (file_block == 0) {
      strcpy(dirname, "/");
      return 1;
   }
-  if(!get_dir_ent_by_index(file_block, &dir_block, &dir_index)) {
+  if(!get_dir_ent_by_index(device, file_block, &dir_block, &dir_index)) {
      return 0; /* cannot find current dir in its parent */
   }
-  strcpy(dirname, mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].name);
+  strcpy(dirname, mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].name);
   return 1;
 }
 
 /**
  * get the number of used blocks and the number of free blocks in the file system through pointers
+ * @param device zero-based device number
  * @param num_blocks_used
  * @param num_blocks_free
  * the return value is  1 (for success) and 0 for failure to obtain the numbers
  */
-int mfs_get_usage(int *num_blocks_used, int *num_blocks_free) {
+int mfs_get_usage(const int device, int *num_blocks_used, int *num_blocks_free) {
   int i;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
   *num_blocks_used = 0;
   *num_blocks_free = 0;
-  for ( i = 0; i < mfs_max_file_blocks; i++) {
-    if (mfs_file_system[i].block_type == MFS_BLOCK_TYPE_EMPTY)
+  for ( i = 0; i < mfs_file_systems_table[device].mfs_max_file_blocks; i++) {
+    if (mfs_file_systems_table[device].mfs_file_system[i].block_type == MFS_BLOCK_TYPE_EMPTY)
       *num_blocks_free += 1;
     else
       *num_blocks_used += 1;
@@ -714,13 +934,19 @@ int mfs_get_usage(int *num_blocks_used, int *num_blocks_free) {
 
 /**
  * get the first available/free block
+ * @param device zero-based device number
  * @return the index of the first free entry in the mfs_open_files array
  * if there is no free entry, returns -1
  */
-static int get_first_free_ftab_index() {
+static int get_first_free_ftab_index(const int device) {
   int i;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return -1;
+  }
+
   for (i=0; i < MFS_MAX_OPEN_FILES; i++) {
-    if (mfs_open_files[i].mode == MFS_MODE_FREE)
+    if (mfs_file_systems_table[device].mfs_open_files[i].mode == MFS_MODE_FREE)
       return i;
   }
   return -1;
@@ -730,25 +956,34 @@ static int get_first_free_ftab_index() {
  * open a directory for reading
  * each subsequent call to mfs_dir_read() returns one directory entry until
  * end of directory
+ * @param device zero-based device number
  * @param dirname is the name of the directory to open
  * @return index of dir in array mfs_open_files or -1
  */
-int mfs_dir_open(const char *dirname) {
-  return mfs_file_open(dirname, MFS_MODE_READ);
+int mfs_dir_open(const int device, const char *dirname) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return -1;
+  }
+  return mfs_file_open(device, dirname, MFS_MODE_READ);
 }
 
 /**
  * close a directory - same as closing a file
+ * @param device zero-based device number
  * @param fd is the descriptor of the directory to close
  * @return  1 on success, 0 otherwise
  */
-int mfs_dir_close(int fd) {
-  return mfs_file_close(fd);
+int mfs_dir_close(const int device, int fd) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+  return mfs_file_close(device, fd);
 }
 
 /**
  * read values from the next valid directory entry
  * The last 3 parameters are output values
+ * @param device zero-based device number
  * @param fd is the file descriptor for an open directory file
  * @param filename is a pointer to the filename within the MFS itself
  * @param filesize is the size in bytes for a regular file or
@@ -756,12 +991,18 @@ int mfs_dir_close(int fd) {
  * @param filetype is MFS_BLOCK_TYPE_FILE or MFS_BLOCK_TYPE_DIR
  * @return 1 for success and 0 for failure or end of dir
  */
-int mfs_dir_read(int fd, char **filename, int *filesize, int *filetype) {
+int mfs_dir_read(const int device, int fd, char **filename, int *filesize, int *filetype) {
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
   int numentriesleft =
-    mfs_file_system[mfs_open_files[fd].first_block].u.dir_data.num_entries;
-  int dir_block = mfs_open_files[fd].current_block;
-  int dir_index = mfs_open_files[fd].offset;
+    mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_open_files[fd].first_block].u.dir_data.num_entries;
+  int dir_block = mfs_file_systems_table[device].mfs_open_files[fd].current_block;
+  int dir_index = mfs_file_systems_table[device].mfs_open_files[fd].offset;
   int direntry_block;
+
 
   numentriesleft -= dir_index;
 /* now get dir_index modulo MFS_MAX_LOCAL_ENT -> current_block is the correct block but dir_index is the number of entries processed so far in all the blocks so it can be arbitrarily large */
@@ -771,31 +1012,26 @@ int mfs_dir_read(int fd, char **filename, int *filesize, int *filetype) {
   while (numentriesleft > 0) {
     if (dir_index == MFS_MAX_LOCAL_ENT) { /* move to the next dir block */
       dir_index = 0;
-      dir_block = mfs_file_system[dir_block].next_block;
-      mfs_open_files[fd].current_block = dir_block;
+      dir_block = mfs_file_systems_table[device].mfs_file_system[dir_block].next_block;
+      mfs_file_systems_table[device].mfs_open_files[fd].current_block = dir_block;
     }
-    if (mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].deleted
-	!= 'y' ) {
+    if (mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].deleted	!= 'y' ) {
       /* found a valid entry */
 
-      *filename =
-	mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].name;
-      direntry_block =
-	mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
-      *filetype = mfs_file_system[direntry_block].block_type;
+      *filename = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].name;
+      direntry_block = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
+      *filetype = mfs_file_systems_table[device].mfs_file_system[direntry_block].block_type;
       if (*filetype == MFS_BLOCK_TYPE_DIR) {
-	*filesize =
-	  mfs_file_system[direntry_block].u.dir_data.num_entries
-	  - mfs_file_system[direntry_block].u.dir_data.num_deleted;
+      	*filesize = mfs_file_systems_table[device].mfs_file_system[direntry_block].u.dir_data.num_entries - mfs_file_systems_table[device].mfs_file_system[direntry_block].u.dir_data.num_deleted;
       }
       else {
-	*filesize = mfs_file_system[direntry_block].block_size;
+        *filesize = mfs_file_systems_table[device].mfs_file_system[direntry_block].block_size;
       }
-      mfs_open_files[fd].offset +=1;
+      mfs_file_systems_table[device].mfs_open_files[fd].offset +=1;
       return 1;
     }
     dir_index += 1;
-    mfs_open_files[fd].offset += 1;
+    mfs_file_systems_table[device].mfs_open_files[fd].offset += 1;
     numentriesleft--;
   }
 
@@ -804,6 +1040,7 @@ int mfs_dir_read(int fd, char **filename, int *filesize, int *filetype) {
 
 /**
  * open a file
+ * @param device zero-based device number
  * @param filename is the name of the file to open
  * @param mode is MFS_MODE_READ or MFS_MODE_WRITE or MFS_MODE_CREATE
  * this function should be used for FILEs and not DIRs
@@ -812,28 +1049,32 @@ int mfs_dir_read(int fd, char **filename, int *filesize, int *filetype) {
  * MFS_MODE_WRITE fails if the specified file is a DIR
  * @return index of file in array mfs_open_files or -1
  */
-int mfs_file_open(const char *filename, int mode) {
+int mfs_file_open(const int device, const char *filename, int mode) {
   int dir_block;
   int dir_index;
   int current_index;
   int reuse_block = -1;
   int reuse_index = -1;
 
-  if (mfs_num_open_files >= MFS_MAX_OPEN_FILES) {/* cannot open any more files */
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return -1;
+  }
+
+  if (mfs_file_systems_table[device].mfs_num_open_files >= MFS_MAX_OPEN_FILES) {/* cannot open any more files */
     return -1;
   }
   if (mode == MFS_MODE_READ || mode == MFS_MODE_WRITE) { /* look for existing file */
-    if (get_dir_ent(filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) { /* found it */
-      if (mode == MFS_MODE_WRITE && mfs_file_system[mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index].block_type != MFS_BLOCK_TYPE_FILE) {
-	/* cannot open anything other than FILE for write */
-	return -1;
+    if (get_dir_ent(device, filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) { /* found it */
+      if (mode == MFS_MODE_WRITE && mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index].block_type != MFS_BLOCK_TYPE_FILE) {
+        /* cannot open anything other than FILE for write */
+        return -1;
       }
-      mfs_num_open_files++;
-      current_index = get_first_free_ftab_index();
-      mfs_open_files[current_index].first_block = mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
-      mfs_open_files[current_index].current_block = mfs_open_files[current_index].first_block;
-      mfs_open_files[current_index].mode = mode;
-      mfs_open_files[current_index].offset = 0;
+      mfs_file_systems_table[device].mfs_num_open_files++;
+      current_index = get_first_free_ftab_index(device);
+      mfs_file_systems_table[device].mfs_open_files[current_index].first_block = mfs_file_systems_table[device].mfs_file_system[dir_block].u.dir_data.dir_ent[dir_index].index;
+      mfs_file_systems_table[device].mfs_open_files[current_index].current_block = mfs_file_systems_table[device].mfs_open_files[current_index].first_block;
+      mfs_file_systems_table[device].mfs_open_files[current_index].mode = mode;
+      mfs_file_systems_table[device].mfs_open_files[current_index].offset = 0;
       return current_index;
     }
     else {
@@ -844,16 +1085,16 @@ int mfs_file_open(const char *filename, int mode) {
   }
 
   if (mode == MFS_MODE_CREATE) { /* create a new file */
-     dir_block = create_file(filename, MFS_BLOCK_TYPE_FILE);
+    dir_block = create_file(device, filename, MFS_BLOCK_TYPE_FILE);
     if (dir_block == 0) { /* failed to create the file */
       return -1;
     }
-    mfs_num_open_files++;
-    current_index = get_first_free_ftab_index();
-    mfs_open_files[current_index].first_block = dir_block;
-    mfs_open_files[current_index].current_block = dir_block;
-    mfs_open_files[current_index].mode = MFS_MODE_WRITE;
-    mfs_open_files[current_index].offset = 0;
+    mfs_file_systems_table[device].mfs_num_open_files++;
+    current_index = get_first_free_ftab_index(device);
+    mfs_file_systems_table[device].mfs_open_files[current_index].first_block = dir_block;
+    mfs_file_systems_table[device].mfs_open_files[current_index].current_block = dir_block;
+    mfs_file_systems_table[device].mfs_open_files[current_index].mode = MFS_MODE_WRITE;
+    mfs_file_systems_table[device].mfs_open_files[current_index].offset = 0;
     return current_index;
   }
   return -1;
@@ -861,6 +1102,7 @@ int mfs_file_open(const char *filename, int mode) {
 
 /**
  * read characters to a file
+ * @param device zero-based device number
  * @param fd is a descriptor for the file from which the characters are read
  * @param buf is a pre allocated buffer that will contain the read characters
  * @param buflen is the number of characters from buf to be read
@@ -871,33 +1113,38 @@ int mfs_file_open(const char *filename, int mode) {
  * if fewer than buflen chars are available then only that many chars are read
  * @return num bytes read or 0 for error=no bytes read
 */
-int mfs_file_read(int fd, char *buf, int buflen) {
+int mfs_file_read(const int device, int fd, char *buf, int buflen) {
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
   int num_read = 0;
-  char *from_ptr = (char *) &(mfs_file_system[mfs_open_files[fd].current_block].u.block_data[mfs_open_files[fd].offset]);
+  char *from_ptr = (char *) &(mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_open_files[fd].current_block].u.block_data[mfs_file_systems_table[device].mfs_open_files[fd].offset]);
   int num_left ;
-  num_left =  mfs_file_system[mfs_open_files[fd].current_block].block_size ;
+  num_left =  mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_open_files[fd].current_block].block_size ;
   if (num_left > MFS_BLOCK_DATA_SIZE)
     num_left = MFS_BLOCK_DATA_SIZE;
-  num_left -=  mfs_open_files[fd].offset ;
+  num_left -=  mfs_file_systems_table[device].mfs_open_files[fd].offset ;
   while (buflen > 0) {
     if (num_left == 0) { /* see if there is a next_block */
-      int next_block = mfs_file_system[mfs_open_files[fd].current_block].next_block;
+      int next_block = mfs_file_systems_table[device].mfs_file_system[mfs_file_systems_table[device].mfs_open_files[fd].current_block].next_block;
       if (next_block == 0) { /* nothing more to read */
-	break;
+        break;
       }
-      if (mfs_file_system[next_block].block_size == 0) { /* nothing more to read */
-	break;
+      if (mfs_file_systems_table[device].mfs_file_system[next_block].block_size == 0) { /* nothing more to read */
+        break;
       }
-      from_ptr = (char *) &(mfs_file_system[next_block].u.block_data[0]);
-      num_left = mfs_file_system[next_block].block_size;
-      mfs_open_files[fd].current_block = next_block;
-      mfs_open_files[fd].offset = 0;
+      from_ptr = (char *) &(mfs_file_systems_table[device].mfs_file_system[next_block].u.block_data[0]);
+      num_left = mfs_file_systems_table[device].mfs_file_system[next_block].block_size;
+      mfs_file_systems_table[device].mfs_open_files[fd].current_block = next_block;
+      mfs_file_systems_table[device].mfs_open_files[fd].offset = 0;
     }
 
     *buf = *from_ptr;
     buf++;
     from_ptr++;
-    mfs_open_files[fd].offset += 1;
+    mfs_file_systems_table[device].mfs_open_files[fd].offset += 1;
     num_read++;
     num_left--;
     buflen--;
@@ -907,6 +1154,7 @@ int mfs_file_read(int fd, char *buf, int buflen) {
 
 /**
  * write characters to a file
+ * @param device zero-based device number
  * @param fd is a descriptor for the file to which the characters are written
  * @param buf is a buffer containing the characters to be written out
  * @param buflen is the number of characters from buf to be written out
@@ -915,7 +1163,17 @@ int mfs_file_read(int fd, char *buf, int buflen) {
  * buflen chars are read from buf and written to 1 or more blocks of the file
  * @return 1 for success or 0 for error=unable to write to file
 */
-int mfs_file_write (int fd, const char *buf, int buflen) {
+int mfs_file_write (const int device, int fd, const char *buf, int buflen) {
+  struct mfs_file_block* mfs_file_system;
+  struct mfs_open_file_struct* mfs_open_files;
+
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+  mfs_open_files = mfs_file_systems_table[device].mfs_open_files;
+
   char *to_ptr = (char *) &(mfs_file_system[mfs_open_files[fd].current_block].u.block_data[mfs_open_files[fd].offset]);
   int num_left = MFS_BLOCK_DATA_SIZE - mfs_open_files[fd].offset;
 
@@ -923,17 +1181,17 @@ int mfs_file_write (int fd, const char *buf, int buflen) {
     if (num_left == 0) { /* create next_block */
       int new_block;
       /* create a new file block linked from this one */
-      if (get_next_free_block(&new_block)) { /* found a free block */
-	mfs_file_system[new_block].prev_block = mfs_open_files[fd].current_block;
-	mfs_file_system[new_block].next_block = 0;
-	mfs_file_system[new_block].block_type = MFS_BLOCK_TYPE_FILE;
-	mfs_file_system[new_block].block_size = 0;
-	mfs_file_system[mfs_open_files[fd].current_block].next_block = new_block;
-	mfs_open_files[fd].current_block = new_block;
-	mfs_open_files[fd].offset = 0;
+      if (get_next_free_block(device, &new_block)) { /* found a free block */
+        mfs_file_system[new_block].prev_block = mfs_open_files[fd].current_block;
+        mfs_file_system[new_block].next_block = 0;
+        mfs_file_system[new_block].block_type = MFS_BLOCK_TYPE_FILE;
+        mfs_file_system[new_block].block_size = 0;
+        mfs_file_system[mfs_open_files[fd].current_block].next_block = new_block;
+        mfs_open_files[fd].current_block = new_block;
+        mfs_open_files[fd].offset = 0;
       }
       else { /* no space for new block  - return failure */
-	return 0;
+        return 0;
       }
 
       to_ptr = (char *) &(mfs_file_system[new_block].u.block_data[0]);
@@ -960,15 +1218,20 @@ int mfs_file_write (int fd, const char *buf, int buflen) {
  * if the fd is not valid, return 0
  * fd is not valid if the index in mfs_open_files is out of range, or
  * if the corresponding entry is not an open file
+ * @param device zero-based device number
  * @param fd is the file descriptor for the file to be closed
  * @return 1 on success, 0 otherwise
  */
-int mfs_file_close(int fd) {
+int mfs_file_close(const int device, int fd) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return 0;
+  }
+
   if (fd <0 || fd >= MFS_MAX_OPEN_FILES)
     return 0;
-  if (mfs_open_files[fd].mode != MFS_MODE_FREE) {
-    mfs_open_files[fd].mode = MFS_MODE_FREE;
-    mfs_num_open_files--;
+  if (mfs_file_systems_table[device].mfs_open_files[fd].mode != MFS_MODE_FREE) {
+    mfs_file_systems_table[device].mfs_open_files[fd].mode = MFS_MODE_FREE;
+    mfs_file_systems_table[device].mfs_num_open_files--;
     return 1;
   }
   return 0;
@@ -976,6 +1239,7 @@ int mfs_file_close(int fd) {
 
 /**
  * seek to a given offset within the file
+ * @param device zero-based device number
  * @param fd should be a valid file descriptor for an open file
  * @param whence is one of MFS_SEEK_SET, MFS_SEEK_CUR or MFS_SEEK_END
  * @param offset is the offset from the beginning, end or current position as specified by the whence parameter
@@ -984,7 +1248,16 @@ int mfs_file_close(int fd) {
  * it is an error to seek before beginning of file or after the end of file
  * @return -1 on failure, value of offset from beginning of file on success
  */
-long mfs_file_lseek(int fd, long offset, int whence) {
+long mfs_file_lseek(const int device, int fd, long offset, int whence) {
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return -1;
+  }
+
+  struct mfs_file_block* mfs_file_system;
+  mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
+  struct mfs_open_file_struct* mfs_open_files;
+  mfs_open_files = mfs_file_systems_table[device].mfs_open_files;
+
   long local_offset;
   unsigned int local_block;
   if (fd <0 || fd >= MFS_MAX_OPEN_FILES || mfs_open_files[fd].mode == MFS_MODE_FREE)
@@ -1012,7 +1285,7 @@ long mfs_file_lseek(int fd, long offset, int whence) {
       return -1;
     }
     else if (offset == 0) { /* return file size */
-      return (mfs_file_system[mfs_open_files[fd].first_block].block_size);
+      offset = mfs_file_system[mfs_open_files[fd].first_block].block_size;
     }
     else {
       offset += mfs_file_system[mfs_open_files[fd].first_block].block_size;

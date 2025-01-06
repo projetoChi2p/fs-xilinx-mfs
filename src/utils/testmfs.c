@@ -32,147 +32,156 @@
 #include <fcntl.h>
 #include "xilmfs.h"
 
+#define UNUSED_ARGUMENT(x) (void)(x)
+
 char *fs ; // = (char *)0xffe00000; /* base address of SRAM */
 
 int main(int argc, char *argv[]) {
 
+
+  UNUSED_ARGUMENT(argc);
+  UNUSED_ARGUMENT(argv);
+
   int numbytes;
   char buffer[4];
   int fd;
+  int device;
   int i;
 
   numbytes = 1000 *sizeof(struct mfs_file_block);
 
   fs = (char *)malloc(numbytes);
 
-  mfs_init_fs(numbytes, fs, MFSINIT_NEW);
-  mfs_create_dir("dir1");
-  mfs_change_dir("dir1");
-  mfs_create_dir("dir1_1");
-  mfs_change_dir("dir1_1");
-  mfs_create_dir("dir1_1_1");
-  fd = mfs_file_open("file1", MFS_MODE_CREATE);
-  mfs_file_write(fd, "abcd", 4);
-  mfs_file_close(fd);
-  mfs_change_dir("..");
-  fd = mfs_file_open("file2", MFS_MODE_CREATE);
-  mfs_file_write(fd, "efgh", 4);
-  mfs_file_close(fd);
-  fd = mfs_file_open("file2",  MFS_MODE_READ);
-  if (mfs_file_read(fd, buffer, 4) != 4) {
+  mfs_init();
+
+  device = mfs_init_fs(numbytes, fs, MFSINIT_NEW);
+  mfs_create_dir(device, "dir1");
+  mfs_change_dir(device, "dir1");
+  mfs_create_dir(device, "dir1_1");
+  mfs_change_dir(device, "dir1_1");
+  mfs_create_dir(device, "dir1_1_1");
+  fd = mfs_file_open(device, "file1", MFS_MODE_CREATE);
+  mfs_file_write(device, fd, "abcd", 4);
+  mfs_file_close(device, fd);
+  mfs_change_dir(device, "..");
+  fd = mfs_file_open(device, "file2", MFS_MODE_CREATE);
+  mfs_file_write(device, fd, "efgh", 4);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file2",  MFS_MODE_READ);
+  if (mfs_file_read(device, fd, buffer, 4) != 4) {
     printf("1");
   }
   else  {
     printf("0");
   }
-  mfs_file_close(fd);
-  fd = mfs_file_open("file3",  MFS_MODE_CREATE);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file3",  MFS_MODE_CREATE);
   for(i = 0; i < 512; i++)
-   mfs_file_write(fd, "a", 1);
-  mfs_file_close(fd);
-  fd = mfs_file_open("file3", MFS_MODE_READ);
-  i = mfs_file_lseek(fd, 0, SEEK_END);
+   mfs_file_write(device, fd, "a", 1);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file3", MFS_MODE_READ);
+  i = mfs_file_lseek(device, fd, 0, SEEK_END);
   if (i != -1) {
-    i = mfs_file_lseek(fd, 1, SEEK_CUR);
+    i = mfs_file_lseek(device, fd, 1, SEEK_CUR);
     if (i == -1) {
-      i = mfs_file_lseek(fd, 0, SEEK_SET);
+      i = mfs_file_lseek(device, fd, 0, SEEK_SET);
       if (i != -1) {
-        i = mfs_file_lseek(fd, 1, SEEK_CUR);
+        i = mfs_file_lseek(device, fd, 1, SEEK_CUR);
         if (i != -1) {
-          i = mfs_file_lseek(fd, 10, SEEK_CUR);
+          i = mfs_file_lseek(device, fd, 10, SEEK_CUR);
           if (i != -1) {
-            i = mfs_file_lseek(fd, 20, SEEK_SET);
+            i = mfs_file_lseek(device, fd, 20, SEEK_SET);
           }
         }
       }
     }
   }
-  mfs_file_close(fd);
-  fd = mfs_file_open("file4", MFS_MODE_CREATE);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file4", MFS_MODE_CREATE);
   for (i = 0; i < 513; i++)
-    mfs_file_write(fd, "b", 1);
-  mfs_file_close(fd);
-  fd = mfs_file_open("file4", MFS_MODE_READ);
-  i = mfs_file_lseek(fd, 0, SEEK_END);
+    mfs_file_write(device, fd, "b", 1);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file4", MFS_MODE_READ);
+  i = mfs_file_lseek(device, fd, 0, SEEK_END);
   if (i != -1) {
-    i = mfs_file_lseek(fd, -1, SEEK_CUR);
+    i = mfs_file_lseek(device, fd, -1, SEEK_CUR);
     if (i != -1) {
-      i = mfs_file_lseek(fd, 0, SEEK_SET);
+      i = mfs_file_lseek(device, fd, 0, SEEK_SET);
       if (i != -1) {
-        i = mfs_file_lseek(fd, 500, SEEK_CUR);
+        i = mfs_file_lseek(device, fd, 500, SEEK_CUR);
         if (i != -1) {
-          i = mfs_file_lseek(fd, 12, SEEK_CUR);
+          i = mfs_file_lseek(device, fd, 12, SEEK_CUR);
           if (i != -1) {
-            i = mfs_file_lseek(fd, 513, SEEK_SET);
+            i = mfs_file_lseek(device, fd, 513, SEEK_SET);
           }
         }
       }
     }
   }
-  mfs_file_close(fd);
-  fd = mfs_file_open("file5", MFS_MODE_CREATE);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file5", MFS_MODE_CREATE);
   for (i=0; i < 1024; i++)
-    mfs_file_write(fd,"c",1);
-  mfs_file_close(fd);
-  fd = mfs_file_open("file6", MFS_MODE_CREATE);
+    mfs_file_write(device, fd,"c",1);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file6", MFS_MODE_CREATE);
   for (i =0; i < 1025; i++)
-    mfs_file_write(fd, "d", 1);
-  mfs_file_close(fd);
-  fd = mfs_file_open("file6", MFS_MODE_READ);
-  i = mfs_file_lseek(fd, 0, SEEK_END);
+    mfs_file_write(device, fd, "d", 1);
+  mfs_file_close(device, fd);
+  fd = mfs_file_open(device, "file6", MFS_MODE_READ);
+  i = mfs_file_lseek(device, fd, 0, SEEK_END);
   if (i != -1) {
-    i = mfs_file_lseek(fd, -1, SEEK_CUR);
+    i = mfs_file_lseek(device, fd, -1, SEEK_CUR);
     if (i != -1) {
-      i = mfs_file_lseek(fd, 0, SEEK_SET);
+      i = mfs_file_lseek(device, fd, 0, SEEK_SET);
       if (i != -1) {
-        i = mfs_file_lseek(fd, 700, SEEK_CUR);
+        i = mfs_file_lseek(device, fd, 700, SEEK_CUR);
         if (i != -1) {
-          i = mfs_file_lseek(fd, -250, SEEK_CUR);
+          i = mfs_file_lseek(device, fd, -250, SEEK_CUR);
           if (i != -1) {
-            i = mfs_file_lseek(fd, 1025, SEEK_SET);
+            i = mfs_file_lseek(device, fd, 1025, SEEK_SET);
           }
         }
       }
     }
   }
-  fd = mfs_file_open("file7", MFS_MODE_CREATE);
+  fd = mfs_file_open(device, "file7", MFS_MODE_CREATE);
   for (i =0; i < 5000; i++)
-    mfs_file_write(fd, "e", 1);
-  mfs_file_close(fd);
-  mfs_change_dir("..");
-  mfs_change_dir("..");
-  mfs_ls_r(-1);
+    mfs_file_write(device, fd, "e", 1);
+  mfs_file_close(device, fd);
+  mfs_change_dir(device, "..");
+  mfs_change_dir(device, "..");
+  mfs_ls_r(device, -1);
 {
   int fd;
   char c;
   long l;
-  fd = mfs_file_open("file1.tmp", MFS_MODE_CREATE);
+  fd = mfs_file_open(device, "file1.tmp", MFS_MODE_CREATE);
   if  (fd == -1) {
     // printf("error opening the file %d\n", errno);
     exit(1);
   }
   for (c= 0; c < 127; c++) {
-    mfs_file_write(fd, &c, 1);
+    mfs_file_write(device, fd, &c, 1);
   }
-  mfs_file_close (fd);
-  fd = mfs_file_open("file1.tmp", MFS_MODE_READ);
-  l = mfs_file_lseek (fd, 0, SEEK_SET);
+  mfs_file_close (device, fd);
+  fd = mfs_file_open(device, "file1.tmp", MFS_MODE_READ);
+  l = mfs_file_lseek (device, fd, 0, SEEK_SET);
   printf("l (0) %ld\n",  l);
-  mfs_file_read(fd, &c, 1);
+  mfs_file_read(device, fd, &c, 1);
   printf("c (0) %d\n", c);
-  l = mfs_file_lseek (fd, 10, SEEK_CUR);
+  l = mfs_file_lseek (device, fd, 10, SEEK_CUR);
   printf("l (11) %ld\n", l);
-  mfs_file_read(fd, &c, 1);
+  mfs_file_read(device, fd, &c, 1);
   printf("c (11) %d\n", c);
-  l = mfs_file_lseek (fd, 20, SEEK_CUR);
+  l = mfs_file_lseek (device, fd, 20, SEEK_CUR);
   printf("l (32) %ld\n", l);
-  mfs_file_read(fd, &c, 1);
+  mfs_file_read(device, fd, &c, 1);
   printf("c (32) %d\n", c);
-  mfs_file_read(fd, &c, 1);
+  mfs_file_read(device, fd, &c, 1);
   printf("c (32) %d\n", c);
-  l = mfs_file_lseek (fd, 0, SEEK_END);
+  l = mfs_file_lseek (device, fd, 0, SEEK_END);
   printf("l (127) %ld\n", l);
-  mfs_file_read(fd, &c, 1);
+  mfs_file_read(device, fd, &c, 1);
   printf("c (-1) %d\n", c);
 }
 

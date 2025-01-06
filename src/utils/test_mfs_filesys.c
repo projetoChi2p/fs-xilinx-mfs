@@ -31,105 +31,609 @@
 
 struct mfs_file_block efs[200];
 
+#define UNUSED_ARGUMENT(x) (void)(x)
+
 int main(int argc, char *argv[]) {
-  char buf[512];
-  char buf2[512];
+  char buf[512+1];
+  char buf2[512+1];
   int fdr;
   int fdw;
   int tmp;
   int num_iter;
-  mfs_init_fs(20*sizeof(struct mfs_file_block), (char *)efs, MFSINIT_NEW);
-  fdr = mfs_file_open(".", MFS_MODE_READ);
-  tmp = mfs_file_read(fdr, &(buf[0]), 512);
-  tmp = mfs_file_close(fdr);
-  tmp = mfs_ls();
-  tmp = mfs_create_dir("testdir1");
-  tmp = mfs_create_dir("testdir2");
-  tmp = mfs_create_dir(".");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("testdir1");
-  tmp = mfs_create_dir("testdir3");
-  tmp = mfs_create_dir("testdir1");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("testdir3");
-  fdw = mfs_file_open("testfile1", MFS_MODE_CREATE);
-  strcpy(buf,"this is a test string");
-  for (num_iter = 0; num_iter < 100; num_iter++)
-    tmp = mfs_file_write(fdw, buf, strlen(buf));
-  fdr = mfs_file_open("testfile1", MFS_MODE_READ);
-  while((tmp= mfs_file_read(fdr, buf2, 512))== 512){
-    buf2[511]='\0';
+  int total_written;
+  int total_read;
+  int device;
+
+  UNUSED_ARGUMENT(argc);
+  UNUSED_ARGUMENT(argv);
+
+
+  const int number_of_blocks = sizeof(efs)/sizeof(efs[0]);
+
+  printf("Size of efs: %lu\n", (long unsigned)sizeof(efs));
+  printf("Size of mfs_file_block: %lu\n", (long unsigned)sizeof(struct mfs_file_block));
+  printf("number_of_blocks: %d\n", number_of_blocks);
+  printf("Size of mfs_dir_ent_block: %lu\n", (long unsigned)sizeof(struct mfs_dir_ent_block));
+  printf("Size of mfs_dir_block: %lu\n", (long unsigned)sizeof(struct mfs_dir_block));
+
+  mfs_init();
+
+
+  device = mfs_init_fs(35*sizeof(struct mfs_file_block), (char *)efs, MFSINIT_NEW);
+  if ( device != 0 ) {
+    printf("device %d [%d]\n", device, __LINE__);
+  }
+
+  fdr = mfs_file_open(device, ".", MFS_MODE_READ);
+  // 0-th index
+  if ( fdr != 0 ) {
+    printf("fdr %d [%d]\n", fdr, __LINE__);
+  }
+
+  tmp = mfs_file_read(device, fdr, &(buf[0]), 512);
+  // empty read must be zero
+  if ( fdr != 0 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdr);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing empty filesystem: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, "testdir1");
+  // 1-st index
+  if ( tmp != 1 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, "testdir2");
+  // 2-nd index
+  if ( tmp != 2 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, ".");
+  // must fail because invalid or existing name
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 2 directory entries for cwd /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "testdir1");
+  if (tmp != MFS_SUCCESS) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+
+  tmp = mfs_create_dir(device, "testdir3");
+  // 3-rd index
+  if ( tmp != 3 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  tmp = mfs_create_dir(device, "testdir1");
+  // 4-th index
+  if ( tmp != 4 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 2 subdirectory entries for cwd /testdir1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "testdir3");
+  if (tmp != MFS_SUCCESS) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+
+  fdw = mfs_file_open(device, "testfile1", MFS_MODE_CREATE);
+  // 0-th index
+  if ( fdw != 0 ) {
+    printf("fdw %d [%d]\n", fdw, __LINE__);
+  }
+
+  strcpy(buf,"this is a test string|");
+  total_written = 0;
+  for (num_iter = 0; num_iter < 100; num_iter++) {
+    tmp = mfs_file_write(device, fdw, buf, strlen(buf));
+    if (tmp != MFS_SUCCESS) {
+      printf("iter %d tmp %d [%d]\n", num_iter, tmp, __LINE__);
+    }
+    total_written += strlen(buf);
+  }
+
+  fdr = mfs_file_open(device, "testfile1", MFS_MODE_READ);
+  // 1-st index
+  if ( fdr != 0 ) {
+    printf("fdr %d [%d]\n", fdr, __LINE__);
+  }
+
+  num_iter = 0;
+  total_read = 0;
+  while( (tmp = mfs_file_read(device, fdr, buf2, 512)) > 0 ){
+    buf2[tmp]='\0';
     strcpy(buf, buf2);
+    printf("iter %d %d '%s' [%d]\n", num_iter++, tmp, buf, __LINE__);
+    total_read += tmp;
   }
-  tmp = mfs_file_close(fdr);
-  tmp = mfs_file_close(fdw);
-  tmp = mfs_file_close(fdw); /* should return error */
-  tmp = mfs_ls();
-  tmp = mfs_cat("testfile1");
-  for (num_iter=65; num_iter < 91; num_iter++) {
+  if (total_written != total_read) {
+    printf("written %d != read %d [%d]\n", total_written, total_read, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdr);
+  if (tmp != MFS_SUCCESS) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdw);
+  if (tmp != MFS_SUCCESS) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdw); /* should return error */
+  if (tmp != MFS_ERROR_FAILED) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 1 file entry for cwd /testdir1/testdir3/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat existing file: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "testfile1");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  for (num_iter=0; num_iter < 10; num_iter++) {
     strcpy(buf,"testfileA");
-    buf[8] = num_iter;
-    tmp = mfs_create_dir(buf);
+    buf[8] = num_iter + 'A';
+    tmp = mfs_create_dir(device, buf);
+    if ( tmp != ( num_iter + 10 ) ) {
+      printf("num_iter %d tmp %d [%d]\n", num_iter, tmp, __LINE__);
+    }
   }
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("testfileX");
-  tmp = mfs_change_dir("..");
-  tmp = mfs_change_dir(".");
-  tmp = mfs_ls();
-  tmp = mfs_delete_dir("testfileX");
-  tmp = mfs_delete_dir(".");
-  tmp = mfs_delete_file("testfile1");
-  tmp = mfs_cat("testfile1"); /* should return error */
-  tmp = mfs_ls();
-  tmp = mfs_copy_stdin_to_file("stdinfile");
-  tmp = mfs_ls();
-  tmp = mfs_cat("stdinfile");
-  tmp = mfs_rename_file("stdinfile", "tmp1");
-  tmp = mfs_file_copy("tmp1", "tmp2");
-  tmp = mfs_ls();
-  tmp = mfs_cat("tmp2");
-  tmp = mfs_create_dir("/testpath1");
-  tmp = mfs_ls();
-  tmp = mfs_create_dir("/testpath1/testpath2");
-  tmp = mfs_change_dir("/testpath1/testpath2");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("/testpath1");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("/testpath2");
-  tmp = mfs_change_dir("testpath2");
-  tmp = mfs_create_dir("/a/b/c");
-  tmp = mfs_change_dir("/testpath2/");
-  tmp = mfs_change_dir("/testpath1/");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("/testpath1/testpath2/");
-  tmp = mfs_ls();
-  tmp = mfs_create_dir("testpath3/");
-  tmp = mfs_ls();
-  tmp = mfs_delete_dir("/testpath1/testpath2/testpath3");
-  tmp = mfs_change_dir("/testpath1");
-  tmp = mfs_delete_dir("/testpath1/testpath2/");
-  tmp = mfs_ls();
-  tmp = mfs_change_dir("/");
-  tmp = mfs_ls();
-  fdw = mfs_file_open("testappend", MFS_MODE_CREATE);
-  strcpy(buf2,"testing append mode...\n");
-  tmp = mfs_file_write(fdw, buf2, strlen(buf2));
-  tmp = mfs_file_close(fdw);
-  tmp = mfs_cat("testappend");
-  fdw = mfs_file_open("testappend", MFS_MODE_WRITE);
-  tmp = mfs_file_lseek(fdw, 0, MFS_SEEK_END);
+
+  printf("Listing 1 file and multiple directory entries for cwd /testdir1/testdir3/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "testfileX");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "..");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+
+  tmp = mfs_change_dir(device, ".");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+
+  printf("Listing 2 subdirectory entries for cwd /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_delete_dir(device, "testfileX");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_delete_dir(device, ".");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_delete_file(device, "testfile1");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat non-existing file: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "testfile1"); /* should return error */
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 2 subdirectory entries for cwd /testdir1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  printf("Capturing data from stdin. Please type text. In POSIX, press CTRL-D for EOF. [%d]\n", __LINE__);
+  fflush(stdout);
+  tmp = mfs_copy_stdin_to_file(device, "stdinfile");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 1 file and 2 subdirectory entries for cwd /testdir1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "stdinfile");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_rename_file(device, "stdinfile", "tmp1");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_copy(device, "tmp1", "tmp2");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 2 files and 2 subdirectory entries for cwd /testdir1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "tmp2");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+  tmp = mfs_create_dir(device, "/testpath1");
+  // 22-th entry
+  if ( tmp != 22 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing 2 files and 2 subdirectory entries for cwd /testdir1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, "/testpath1/testpath2");
+  // 23-th index
+  if ( tmp != 23 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath1/testpath2");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+  printf("Listing empty /testpath1/testpath2/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath1");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+  printf("Listing 1 directory entry for /testpath1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  tmp = mfs_change_dir(device, "/testpath2");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "testpath2");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, "/a/b/c");
+  // must fail parent does no exist
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath2/");
+  if ( tmp != MFS_ERROR_FAILED ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath1/");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /testpath1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath1/testpath2/");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /testpath1/testpath2/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_create_dir(device, "testpath3/");
+  // 24-th index
+  if ( tmp != 24 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /testpath1/testpath2/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  tmp = mfs_delete_dir(device, "/testpath1/testpath2/testpath3");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_change_dir(device, "/testpath1");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_delete_dir(device, "/testpath1/testpath2/");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /testpath1/*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  tmp = mfs_change_dir(device, "/");
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+  printf("Listing /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  fdw = mfs_file_open(device, "testappend", MFS_MODE_CREATE);
+  // 0-th index
+  if ( fdw != 0 ) {
+    printf("fdw %d [%d]\n", fdw, __LINE__);
+  }
+
+  strcpy(buf2,"TESTING APPEND MODE...\n");
+  tmp = mfs_file_write(device, fdw, buf2, strlen(buf2));
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdw);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "testappend");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  fdw = mfs_file_open(device, "testappend", MFS_MODE_WRITE);
+  // 0-th index
+  if ( fdw != 0 ) {
+    printf("fdw %d [%d]\n", fdw, __LINE__);
+  }
+
+  tmp = mfs_file_lseek(device, fdw, 0, MFS_SEEK_END);
+  // File contains 23 octets
+  if ( tmp != 23 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
   strcpy(buf2, "testing append mode2\n");
-  tmp = mfs_file_write(fdw, buf2, strlen(buf2));
-  tmp = mfs_file_close(fdw);
-  tmp = mfs_cat("testappend");
-  fdw = mfs_file_open("testappend", MFS_MODE_WRITE);
-  tmp = mfs_file_lseek(fdw, 10, MFS_SEEK_SET);
+  // append at the end
+  tmp = mfs_file_write(device, fdw, buf2, strlen(buf2));
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdw);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "testappend");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  fdw = mfs_file_open(device, "testappend", MFS_MODE_WRITE);
+  // 0-th index
+  if ( fdw != 0 ) {
+    printf("fdw %d [%d]\n", fdw, __LINE__);
+  }
+
+  tmp = mfs_file_lseek(device, fdw, 10, MFS_SEEK_SET);
+  if ( tmp != 10 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
   strcpy(buf2, "testing append mode3\n");
-  tmp = mfs_file_write(fdw, buf2, strlen(buf2));
-  tmp = mfs_file_lseek(fdw,-10, MFS_SEEK_END);
-  tmp = mfs_file_write(fdw, buf2, strlen(buf2));
-  tmp = mfs_file_close(fdw);
-  tmp = mfs_cat("testappend");
+  // partial overwrite
+  tmp = mfs_file_write(device, fdw, buf2, strlen(buf2));
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_lseek(device, fdw,-10, MFS_SEEK_END);
+  // File contains 65 octets
+  if ( tmp != 55 ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Listing /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_write(device, fdw, buf2, strlen(buf2));
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  tmp = mfs_file_close(device, fdw);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+  printf("Cat: [%d]\n", __LINE__);
+  tmp = mfs_cat(device, "testappend");
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+
+
+  tmp = mfs_get_current_dir_name(device, buf);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
+  printf("Current dir %s: [%d]\n", buf, __LINE__);
+
+  printf("Listing /*: [%d]\n", __LINE__);
+  tmp = mfs_ls(device);
+  printf("--- end [%d]\n", __LINE__);
+  if ( tmp != MFS_SUCCESS ) {
+    printf("tmp %d [%d]\n", tmp, __LINE__);
+  }
 
   return 0;
 }
