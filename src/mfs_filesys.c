@@ -53,12 +53,12 @@ void mfs_init() {
 
   #ifdef DEBUG
     printf("MFS File Name Len.: %d\n", MFS_MAX_FILENAME_LENGTH);
-    printf("MFS Dir Entry Block: %d\n", sizeof(struct mfs_dir_ent_block ));
+    printf("MFS Dir Entry Block: %d\n", (int)sizeof(struct mfs_dir_ent_block ));
     printf("MFS Dir Entries: %d\n", MFS_MAX_LOCAL_ENT);
-    printf("MFS Dir Block: %d\n", sizeof(struct mfs_dir_block ));
+    printf("MFS Dir Block: %d\n", (int)sizeof(struct mfs_dir_block ));
     printf("MFS Data Block Size: %d\n", MFS_BLOCK_DATA_SIZE);
-    printf("MFS File Block: %d\n", sizeof(struct mfs_file_block));
-    printf("MFS File System: %d\n", sizeof(struct mfs_filesystem_struct));
+    printf("MFS File Block: %d\n", (int)sizeof(struct mfs_file_block));
+    printf("MFS File System: %d\n", (int)sizeof(struct mfs_filesystem_struct));
   #endif
 
 }
