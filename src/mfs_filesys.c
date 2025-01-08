@@ -747,6 +747,11 @@ int mfs_delete_file (const int device, char *filename) {
     if (dir_block != first_dir_block)
       mfs_file_systems_table[device].mfs_file_system[first_dir_block].u.dir_data.num_deleted += 1;
   }
+  else
+  {
+    /* could no delete directory (possibly non empty) or file */
+    return 0;
+  }
   return 1;
 }
 
