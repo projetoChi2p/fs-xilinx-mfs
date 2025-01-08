@@ -129,18 +129,35 @@ int mfs_init_fs(int numbytes, char *address, int init_type) {
     mfs_file_systems_table[device].mfs_free_block_list = 1;
   }
   else if (init_type == MFSINIT_IMAGE) {
-    i = 0;
-    while (mfs_file_system[i].block_type != MFS_BLOCK_TYPE_EMPTY) {
-      i++;
-    }
-    /* initialize free block list to the first free index */
-    mfs_file_systems_table[device].mfs_free_block_list = i;
-    // TODO: scan the whole filesystem chaining the free blocks
-    return MFS_ERROR_NOT_IMPLEMENTED;
+
+      i = 0;
+      /* find any free block */
+      while ( (mfs_file_system[i].block_type != MFS_BLOCK_TYPE_EMPTY) &&
+              (i<mfs_file_systems_table[device].mfs_max_file_blocks) ) {
+        i++;
+      }
+      if ( i == mfs_file_systems_table[device].mfs_max_file_blocks )
+      {
+        /* initialize free block list as empty */
+        mfs_file_systems_table[device].mfs_free_block_list = 0;
+      }
+      else {
+        /* Navigate back in list to find head.
+         */
+        while ( mfs_file_system[i].prev_block != 0 ) {
+          i = mfs_file_system[i].prev_block;
+          if ( (i<0) || (i>=mfs_file_systems_table[device].mfs_max_file_blocks) )
+          {
+            return MFS_ERROR_IMAGE;
+          }
+        }
+        /* initialize free block list to the first free index */
+        mfs_file_systems_table[device].mfs_free_block_list = i;
+      }
   }
   else { // (init_type == MFSINIT_ROM_IMAGE)
     mfs_file_systems_table[device].flags |= MFSINIT_ROM_IMAGE;
-
+    /* no free block in ROM image */
     mfs_file_systems_table[device].mfs_free_block_list = 0;
   }
 
@@ -156,6 +173,29 @@ int mfs_init_fs(int numbytes, char *address, int init_type) {
   return device;
 }
 
+
+/**
+ * close the file system;
+ * this function must be called after all files and directories are closed
+ * @param device zero-based device number
+ * @return 1 for success, negative error code for failure
+ */
+int mfs_fs_close(const int device)
+{
+  if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
+    return MFS_ERROR_NOT_INIT;
+  }
+
+  /* mfs_num_open_files accounts for both files and directories currently open */
+  if (mfs_file_systems_table[device].mfs_num_open_files != 0)
+  {
+    return MFS_ERROR_HAS_OPEN_FILES;
+  };
+
+  mfs_file_systems_table[device].flags = MFS_FLAG_IS_FREE;
+
+  return MFS_SUCCESS;
+}
 
 
 /**
@@ -733,6 +773,9 @@ int mfs_delete_file (const int device, char *filename) {
   if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
     return 0;
   }
+  if ( ( mfs_file_systems_table[device].flags & MFSINIT_ROM_IMAGE ) == MFSINIT_ROM_IMAGE ) {
+    return 0;
+  }
 
   if (!get_dir_ent(device, filename, &dir_block, &dir_index, &reuse_block, &reuse_index)) {
     /* file does not exist */
@@ -765,6 +808,10 @@ int mfs_create_dir(const int device, char *newdir) {
   if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
     return 0;
   }
+  if ( ( mfs_file_systems_table[device].flags & MFSINIT_ROM_IMAGE ) == MFSINIT_ROM_IMAGE ) {
+    return 0;
+  }
+
   return create_file(device, newdir, MFS_BLOCK_TYPE_DIR);
 }
 
@@ -779,8 +826,12 @@ int mfs_delete_dir (const int device, char *deldir) {
   if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
     return 0;
   }
-  if (!strcmp(deldir,"..") || !strcmp(deldir,"."))
+  if ( ( mfs_file_systems_table[device].flags & MFSINIT_ROM_IMAGE ) == MFSINIT_ROM_IMAGE ) {
     return 0;
+  }
+  if (!strcmp(deldir,"..") || !strcmp(deldir,".")) {
+    return 0;
+  }
   return mfs_delete_file(device, deldir);
 }
 
@@ -800,9 +851,14 @@ int mfs_rename_file(const int device, char *from_file, char *to_file) {
   int to_dir_index;
   int reuse_block = -1;
   int reuse_index = -1;
+
   if ( ( mfs_file_systems_table[device].flags & MFS_FLAG_IS_IN_USE ) != MFS_FLAG_IS_IN_USE ) {
     return 0;
   }
+  if ( ( mfs_file_systems_table[device].flags & MFSINIT_ROM_IMAGE ) == MFSINIT_ROM_IMAGE ) {
+    return 0;
+  }
+
   if (get_dir_ent(device, from_file, &from_dir_block, &from_dir_index, &reuse_block, &reuse_index) &&
       !get_dir_ent(device, to_file, &to_dir_block, &to_dir_index, &reuse_block, &reuse_index)) {
     set_filename(mfs_file_systems_table[device].mfs_file_system[from_dir_block].u.dir_data.dir_ent[from_dir_index].name, get_basename(to_file));
@@ -1065,6 +1121,13 @@ int mfs_file_open(const int device, const char *filename, int mode) {
     return -1;
   }
 
+  if ( ( mfs_file_systems_table[device].flags & MFSINIT_ROM_IMAGE ) == MFSINIT_ROM_IMAGE ) {
+    if ( (mode == MFS_MODE_CREATE) || (mode == MFS_MODE_WRITE) )
+    {
+      return -1;
+    }
+  }
+
   if (mfs_file_systems_table[device].mfs_num_open_files >= MFS_MAX_OPEN_FILES) {/* cannot open any more files */
     return -1;
   }
@@ -1178,6 +1241,11 @@ int mfs_file_write (const int device, int fd, const char *buf, int buflen) {
 
   mfs_file_system = mfs_file_systems_table[device].mfs_file_system;
   mfs_open_files = mfs_file_systems_table[device].mfs_open_files;
+
+  if ( mfs_open_files[fd].mode == MFS_MODE_READ ) {
+    /* cant write - return failure */
+    return 0;
+  }
 
   char *to_ptr = (char *) &(mfs_file_system[mfs_open_files[fd].current_block].u.block_data[mfs_open_files[fd].offset]);
   int num_left = MFS_BLOCK_DATA_SIZE - mfs_open_files[fd].offset;
@@ -1308,11 +1376,3 @@ long mfs_file_lseek(const int device, int fd, long offset, int whence) {
   mfs_open_files[fd].offset = local_offset;
   return offset;
 }
-
-
-
-
-
-
-
-
